@@ -1,81 +1,23 @@
 import React, { useState, useRef, useEffect } from "react";
 
-// ------------------ Utils ------------------
-const generateBlanks = (lines, difficulty) => {
-  return lines.map(line => {
-    if (!line.text || line.text.trim() === '') {
-      return {
-        ...line,
-        displayText: line.text,
-        blanks: [],
-        blankIndices: []
-      };
-    }
-
-    const words = line.text.split(" ").filter(word => word.trim() !== '');
-    if (words.length === 0) {
-      return {
-        ...line,
-        displayText: line.text,
-        blanks: [],
-        blankIndices: []
-      };
-    }
-
-    let count = 1;
-    if (difficulty === "Medio") count = Math.max(1, Math.floor(words.length / 3));
-    if (difficulty === "Difícil") count = Math.max(1, Math.floor(words.length / 2));
-
-    let blankIndices = [];
-    const maxAttempts = words.length * 2;
-    let attempts = 0;
-    
-    while (blankIndices.length < count && attempts < maxAttempts) {
-      const idx = Math.floor(Math.random() * words.length);
-      if (!blankIndices.includes(idx)) {
-        blankIndices.push(idx);
-      }
-      attempts++;
-    }
-
-    const blanks = words.map((w, i) =>
-      blankIndices.includes(i) ? "_____" : w
-    );
-
-    return {
-      ...line,
-      displayText: blanks.join(" "),
-      blanks: blankIndices.map(i => words[i]),
-      blankIndices: blankIndices,
-      currentBlankIndex: 0
-    };
-  });
-};
-
 const extractVideoId = (url) => {
   if (!url) return "";
-  // Eliminar espacios y caracteres extraños
   url = url.trim();
   
-  // youtu.be format
   if (url.includes("youtu.be/")) {
-    const id = url.split("youtu.be/")[1].split("?")[0].split("&")[0];
-    return id;
+    return url.split("youtu.be/")[1].split("?")[0].split("&")[0];
   }
   
-  // youtube.com/watch format
   if (url.includes("youtube.com/watch")) {
     try {
       const urlObj = new URL(url);
       return urlObj.searchParams.get("v");
     } catch (e) {
-      // Fallback para URLs malformadas
       const match = url.match(/[?&]v=([^&]+)/);
       return match ? match[1] : "";
     }
   }
   
-  // Si parece ser solo el ID del video (11 caracteres)
   if (url.match(/^[a-zA-Z0-9_-]{11}$/)) {
     return url;
   }
@@ -83,22 +25,19 @@ const extractVideoId = (url) => {
   return "";
 };
 
-// Función para extraer información del video de YouTube
 const extractVideoInfo = async (videoId) => {
   try {
-    // Esta es una aproximación - en producción necesitarías usar la API de YouTube
     const response = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`);
     const data = await response.json();
     
     if (data.title) {
-      // Intentar extraer artista y canción del título
       const title = data.title;
       const parts = title.split('-').map(part => part.trim());
       
       if (parts.length >= 2) {
         return {
           artist: parts[0],
-          track: parts[1].replace(/\(.*\)/g, '').trim() // Remover texto entre paréntesis
+          track: parts[1].replace(/\(.*\)/g, '').trim()
         };
       } else {
         return {
@@ -114,12 +53,12 @@ const extractVideoInfo = async (videoId) => {
   return { artist: '', track: '' };
 };
 
-// ------------------ Component ------------------
 export default function App() {
   const [videoUrl, setVideoUrl] = useState("");
   const [videoId, setVideoId] = useState("");
   const [player, setPlayer] = useState(null);
   const [captions, setCaptions] = useState([]);
+  const [revealedWords, setRevealedWords] = useState({});
   const [difficulty, setDifficulty] = useState("Fácil");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [waitingInput, setWaitingInput] = useState(false);
@@ -132,20 +71,15 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [gameStarted, setGameStarted] = useState(false);
 
-  // ------------------ YouTube IFrame ------------------
+  // YouTube IFrame API
   useEffect(() => {
-    // Cargar la API de YouTube
     if (!window.YT && !window.ytApiLoading) {
       window.ytApiLoading = true;
       const tag = document.createElement("script");
       tag.src = "https://www.youtube.com/iframe_api";
-      tag.onload = () => {
-        console.log("YouTube API script loaded");
-      };
       document.head.appendChild(tag);
       
       window.onYouTubeIframeAPIReady = () => {
-        console.log("YouTube API ready");
         window.ytApiReady = true;
         if (videoId) {
           createPlayer(videoId);
@@ -158,17 +92,14 @@ export default function App() {
 
   const createPlayer = (id) => {
     if (!id || !window.YT || !window.YT.Player) {
-      console.log("YouTube API not ready or no video ID");
       return;
     }
 
     try {
-      // Destruir player existente
       if (player) {
         player.destroy();
       }
 
-      // Crear nuevo player
       const ytPlayer = new window.YT.Player("youtube-player", {
         height: "315",
         width: "100%",
@@ -180,7 +111,6 @@ export default function App() {
         },
         events: {
           onReady: (event) => {
-            console.log("Player ready");
             setPlayer(event.target);
           },
           onError: (event) => {
@@ -192,11 +122,10 @@ export default function App() {
       
     } catch (error) {
       console.error("Error creating YouTube player:", error);
-      alert("Error creando el reproductor de YouTube");
     }
   };
 
-  // ------------------ Auto-extract info from YouTube URL ------------------
+  // Auto-extract info from YouTube URL
   const handleUrlChange = async (url) => {
     setVideoUrl(url);
     
@@ -205,7 +134,6 @@ export default function App() {
       if (id) {
         setVideoId(id);
         
-        // Intentar extraer información automáticamente
         const info = await extractVideoInfo(id);
         if (info.artist || info.track) {
           setArtistName(info.artist);
@@ -215,7 +143,23 @@ export default function App() {
     }
   };
 
-  // ------------------ Cargar video y letras ------------------
+  // Función para obtener el texto a mostrar (con palabras reveladas)
+  const getDisplayText = (line, lineIndex) => {
+    if (!line.blankPositions || line.blankPositions.length === 0) {
+      return line.displayText;
+    }
+
+    const words = line.text.split(" ");
+    return words.map((word, wordIndex) => {
+      if (line.blankPositions.includes(wordIndex)) {
+        const wordKey = `${lineIndex}-${wordIndex}`;
+        return revealedWords[wordKey] || "_____";
+      }
+      return word;
+    }).join(" ");
+  };
+
+  // Cargar video y letras
   const handleLoadVideo = async () => {
     const id = extractVideoId(videoUrl);
     if (!id) {
@@ -231,15 +175,14 @@ export default function App() {
     setLoading(true);
     
     try {
-      // Primero crear/recrear el player
       if (!player || player.getVideoData().video_id !== id) {
         setVideoId(id);
-        // Esperar un poco para que se cree el player
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
+      // Enviar la dificultad al servidor
       const res = await fetch(
-        `http://localhost:3001/captions?track_name=${encodeURIComponent(trackName)}&artist_name=${encodeURIComponent(artistName)}`
+        `http://localhost:3001/captions?track_name=${encodeURIComponent(trackName)}&artist_name=${encodeURIComponent(artistName)}&difficulty=${encodeURIComponent(difficulty)}`
       );
       
       if (!res.ok) {
@@ -253,18 +196,16 @@ export default function App() {
         return;
       }
 
-      const linesWithBlanks = generateBlanks(data, difficulty);
-      setCaptions(linesWithBlanks);
+      setCaptions(data); // Los blanks ya vienen aplicados del servidor
+      setRevealedWords({});
       setCurrentIndex(0);
       setLives(3);
       setGameStarted(true);
       setWaitingInput(false);
       
-      console.log("Captions loaded:", linesWithBlanks.length, "lines");
-      
     } catch (err) {
       console.error("Error loading captions:", err);
-      alert("No se pudieron obtener las letras desde LRCLIB. Verifica la conexión y que el servidor esté corriendo.");
+      alert("No se pudieron obtener las letras desde LRCLIB.");
     } finally {
       setLoading(false);
     }
@@ -282,7 +223,7 @@ export default function App() {
     }
   };
 
-  // ------------------ Letra animada ------------------
+  // Letra animada
   useEffect(() => {
     let interval;
     if (player && captions.length > 0 && gameStarted) {
@@ -313,11 +254,10 @@ export default function App() {
               setWaitingInput(true);
             }
 
-            // Animación de desplazamiento
             if (rectangleRef.current) {
-              const lineHeight = 40; // Altura aproximada de cada línea
+              const lineHeight = 40;
               rectangleRef.current.scrollTo({ 
-                top: index * lineHeight - 100, // -100 para centrar mejor
+                top: index * lineHeight - 100,
                 behavior: "smooth" 
               });
             }
@@ -330,23 +270,44 @@ export default function App() {
     };
   }, [player, captions, waitingInput, currentIndex, gameStarted]);
 
-  // ------------------ Validar input ------------------
+  // Función para normalizar texto (quitar puntuación y espacios extra)
+  const normalizeText = (text) => {
+    return text
+      .toLowerCase()
+      .replace(/['']/g, '') // Quitar apostrofes
+      .replace(/[^\w\s]/g, '') // Quitar puntuación
+      .replace(/\s+/g, ' ') // Normalizar espacios
+      .trim();
+  };
+
+  // Validar input
   const handleKeyPress = (e) => {
     if (e.key === "Enter" && waitingInput && captions[currentIndex]) {
       const currentLine = captions[currentIndex];
       const currentBlankIndex = currentLine.currentBlankIndex || 0;
       const correctWord = currentLine.blanks[currentBlankIndex];
       
-      if (inputWord.trim().toLowerCase() === correctWord.toLowerCase()) {
-        // Palabra correcta
+      const normalizedInput = normalizeText(inputWord);
+      const normalizedCorrect = normalizeText(correctWord);
+      
+      if (normalizedInput === normalizedCorrect) {
+        // Revelar la palabra
+        const wordIndexInLine = currentLine.blankPositions[currentBlankIndex];
+        const wordKey = `${currentIndex}-${wordIndexInLine}`;
+        
+        setRevealedWords(prev => ({
+          ...prev,
+          [wordKey]: correctWord
+        }));
+        
         if (currentBlankIndex + 1 < currentLine.blanks.length) {
-          // Hay más blanks en esta línea
+          // Más blanks en esta línea
           const updatedCaptions = [...captions];
           updatedCaptions[currentIndex].currentBlankIndex = currentBlankIndex + 1;
           setCaptions(updatedCaptions);
           setInputWord("");
         } else {
-          // Todos los blanks de esta línea completados
+          // Línea completada
           setWaitingInput(false);
           setInputWord("");
           handlePlay();
@@ -373,6 +334,7 @@ export default function App() {
     setWaitingInput(false);
     setInputWord("");
     setCaptions([]);
+    setRevealedWords({});
     if (player) {
       handlePause();
     }
@@ -395,7 +357,7 @@ export default function App() {
         
         <input
           type="text"
-          placeholder="URL de YouTube (ej: https://www.youtube.com/watch?v=...)"
+          placeholder="URL de YouTube"
           value={videoUrl}
           onChange={(e) => handleUrlChange(e.target.value)}
           style={{ 
@@ -434,6 +396,24 @@ export default function App() {
             borderRadius: "4px"
           }}
         />
+
+        <div style={{ marginBottom: "15px" }}>
+          <label style={{ marginRight: "10px", fontWeight: "bold" }}>Dificultad:</label>
+          <select 
+            value={difficulty} 
+            onChange={(e) => setDifficulty(e.target.value)}
+            style={{ 
+              padding: "5px",
+              border: "1px solid #ddd",
+              borderRadius: "4px",
+              marginRight: "15px"
+            }}
+          >
+            <option value="Fácil">Fácil</option>
+            <option value="Medio">Medio</option>
+            <option value="Difícil">Difícil</option>
+          </select>
+        </div>
         
         <div style={{ marginBottom: "15px" }}>
           <button 
@@ -449,7 +429,7 @@ export default function App() {
               cursor: loading ? "not-allowed" : "pointer"
             }}
           >
-            {loading ? "⏳ Cargando..." : "🔗 Cargar Video + Letras"}
+            {loading ? "⏳ Cargando..." : "🔗 Cargar"}
           </button>
           
           <button 
@@ -499,15 +479,12 @@ export default function App() {
           </button>
         </div>
 
-        <div 
-          id="youtube-player" 
-          style={{ 
-            marginTop: "20px",
-            border: "2px solid #ddd",
-            borderRadius: "8px",
-            overflow: "hidden"
-          }}
-        ></div>
+        <div id="youtube-player" style={{ 
+          marginTop: "20px",
+          border: "2px solid #ddd",
+          borderRadius: "8px",
+          overflow: "hidden"
+        }}></div>
         
         {!videoId && (
           <div style={{
@@ -518,7 +495,7 @@ export default function App() {
             textAlign: "center",
             color: "#6c757d"
           }}>
-            El video aparecerá aquí cuando ingreses una URL válida
+            El video aparecerá aquí
           </div>
         )}
       </div>
@@ -526,23 +503,6 @@ export default function App() {
       {/* Juego de letras */}
       <div style={{ padding: "20px", backgroundColor: "#f1f3f5" }}>
         <h2>🎮 Juego de Letras</h2>
-        
-        <div style={{ marginBottom: "20px" }}>
-          <label style={{ marginRight: "10px", fontWeight: "bold" }}>Dificultad:</label>
-          <select 
-            value={difficulty} 
-            onChange={(e) => setDifficulty(e.target.value)}
-            style={{ 
-              padding: "5px",
-              border: "1px solid #ddd",
-              borderRadius: "4px"
-            }}
-          >
-            <option value="Fácil">Fácil (1 palabra por línea)</option>
-            <option value="Medio">Medio (1/3 de las palabras)</option>
-            <option value="Difícil">Difícil (1/2 de las palabras)</option>
-          </select>
-        </div>
 
         <div
           ref={rectangleRef}
@@ -557,7 +517,6 @@ export default function App() {
             fontWeight: "500",
             lineHeight: "1.6"
           }}
-          tabIndex={0}
         >
           {captions.length === 0 ? (
             <div style={{ 
@@ -565,7 +524,7 @@ export default function App() {
               color: "#95a5a6",
               marginTop: "50px"
             }}>
-              Las letras aparecerán aquí cuando cargues una canción
+              Las letras aparecerán aquí
             </div>
           ) : (
             captions.map((line, idx) => (
@@ -582,7 +541,7 @@ export default function App() {
                   borderLeft: idx === currentIndex ? "4px solid #3498db" : "4px solid transparent"
                 }}
               >
-                {idx === currentIndex ? line.displayText : line.text}
+                {getDisplayText(line, idx)}
               </div>
             ))
           )}
@@ -600,7 +559,7 @@ export default function App() {
           
           {gameStarted && (
             <div style={{ color: "#28a745", fontWeight: "bold" }}>
-              🎵 Línea: {currentIndex + 1} / {captions.length}
+              🎵 {currentIndex + 1} / {captions.length}
             </div>
           )}
         </div>
@@ -611,7 +570,7 @@ export default function App() {
               type="text"
               value={inputWord}
               onChange={(e) => setInputWord(e.target.value)}
-              placeholder={`Escribe la palabra que falta...`}
+              placeholder="Escribe la palabra..."
               onKeyDown={handleKeyPress}
               autoFocus
               style={{ 
