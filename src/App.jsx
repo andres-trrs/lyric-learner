@@ -65,11 +65,27 @@ export default function App() {
   const [inputWord, setInputWord] = useState("");
   const [lives, setLives] = useState(3);
   const rectangleRef = useRef(null);
+  const lineRefs = useRef([]);
 
   const [trackName, setTrackName] = useState("");
   const [artistName, setArtistName] = useState("");
   const [loading, setLoading] = useState(false);
   const [gameStarted, setGameStarted] = useState(false);
+
+  // 🎨 color de fondo aleatorio (una sola vez al cargar)
+  const [bgColor, setBgColor] = useState("#2c3e50");
+  useEffect(() => {
+    const colors = [
+      "#e74c3c", "#9b59b6", "#2980b9", "#27ae60",
+      "#f39c12", "#d35400", "#16a085", "#8e44ad",
+      "#2ecc71", "#e67e22"
+    ];
+    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+    setBgColor(randomColor);
+  }, []);
+
+  // ⚙️ selector de vidas iniciales
+  const [initialLives, setInitialLives] = useState(3);
 
   // YouTube IFrame API
   useEffect(() => {
@@ -125,7 +141,6 @@ export default function App() {
     }
   };
 
-  // Auto-extract info from YouTube URL
   const handleUrlChange = async (url) => {
     setVideoUrl(url);
     
@@ -143,7 +158,6 @@ export default function App() {
     }
   };
 
-  // Función para obtener el texto a mostrar (con palabras reveladas)
   const getDisplayText = (line, lineIndex) => {
     if (!line.blankPositions || line.blankPositions.length === 0) {
       return line.displayText;
@@ -159,7 +173,6 @@ export default function App() {
     }).join(" ");
   };
 
-  // Cargar video y letras
   const handleLoadVideo = async () => {
     const id = extractVideoId(videoUrl);
     if (!id) {
@@ -180,7 +193,6 @@ export default function App() {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
-      // Enviar la dificultad al servidor
       const res = await fetch(
         `http://localhost:3001/captions?track_name=${encodeURIComponent(trackName)}&artist_name=${encodeURIComponent(artistName)}&difficulty=${encodeURIComponent(difficulty)}`
       );
@@ -196,10 +208,10 @@ export default function App() {
         return;
       }
 
-      setCaptions(data); // Los blanks ya vienen aplicados del servidor
+      setCaptions(data);
       setRevealedWords({});
       setCurrentIndex(0);
-      setLives(3);
+      setLives(initialLives); // 👈 usa el valor seleccionado
       setGameStarted(true);
       setWaitingInput(false);
       
@@ -211,19 +223,35 @@ export default function App() {
     }
   };
 
+  // Controles internos para pausar/reproducir (UI removida, pero usados por el juego)
   const handlePlay = () => { 
     if (player && typeof player.playVideo === 'function') {
       player.playVideo(); 
     }
   };
-  
   const handlePause = () => { 
     if (player && typeof player.pauseVideo === 'function') {
       player.pauseVideo(); 
     }
   };
 
-  // Letra animada
+  // Scroll centrado (línea activa en el medio)
+  const scrollToCenter = (index) => {
+    const container = rectangleRef.current;
+    const el = lineRefs.current[index];
+    if (!container || !el) return;
+
+    const elTop = el.offsetTop;
+    const elHeight = el.offsetHeight;
+    const target = elTop - (container.clientHeight / 2) + (elHeight / 2);
+
+    container.scrollTo({
+      top: Math.max(0, target),
+      behavior: "smooth"
+    });
+  };
+
+  // Sincroniza tiempo -> línea activa, pausa si hay blanks
   useEffect(() => {
     let interval;
     if (player && captions.length > 0 && gameStarted) {
@@ -246,20 +274,12 @@ export default function App() {
           
           if (index !== currentIndex) {
             setCurrentIndex(index);
-            
-            // Pausar si hay blanks en esta línea
+            scrollToCenter(index);
+
             const currentLine = captions[index];
             if (currentLine?.blanks?.length > 0 && !waitingInput) {
               handlePause();
               setWaitingInput(true);
-            }
-
-            if (rectangleRef.current) {
-              const lineHeight = 40;
-              rectangleRef.current.scrollTo({ 
-                top: index * lineHeight - 100,
-                behavior: "smooth" 
-              });
             }
           }
         }
@@ -270,17 +290,15 @@ export default function App() {
     };
   }, [player, captions, waitingInput, currentIndex, gameStarted]);
 
-  // Función para normalizar texto (quitar puntuación y espacios extra)
   const normalizeText = (text) => {
     return text
       .toLowerCase()
-      .replace(/['']/g, '') // Quitar apostrofes
-      .replace(/[^\w\s]/g, '') // Quitar puntuación
-      .replace(/\s+/g, ' ') // Normalizar espacios
+      .replace(/['']/g, '')
+      .replace(/[^\w\s]/g, '')
+      .replace(/\s+/g, ' ')
       .trim();
   };
 
-  // Validar input
   const handleKeyPress = (e) => {
     if (e.key === "Enter" && waitingInput && captions[currentIndex]) {
       const currentLine = captions[currentIndex];
@@ -291,7 +309,6 @@ export default function App() {
       const normalizedCorrect = normalizeText(correctWord);
       
       if (normalizedInput === normalizedCorrect) {
-        // Revelar la palabra
         const wordIndexInLine = currentLine.blankPositions[currentBlankIndex];
         const wordKey = `${currentIndex}-${wordIndexInLine}`;
         
@@ -301,19 +318,16 @@ export default function App() {
         }));
         
         if (currentBlankIndex + 1 < currentLine.blanks.length) {
-          // Más blanks en esta línea
           const updatedCaptions = [...captions];
           updatedCaptions[currentIndex].currentBlankIndex = currentBlankIndex + 1;
           setCaptions(updatedCaptions);
           setInputWord("");
         } else {
-          // Línea completada
           setWaitingInput(false);
           setInputWord("");
           handlePlay();
         }
       } else {
-        // Palabra incorrecta
         const newLives = lives - 1;
         setLives(newLives);
         setInputWord("");
@@ -328,16 +342,8 @@ export default function App() {
   };
 
   const resetGame = () => {
-    setGameStarted(false);
-    setCurrentIndex(0);
-    setLives(3);
-    setWaitingInput(false);
-    setInputWord("");
-    setCaptions([]);
-    setRevealedWords({});
-    if (player) {
-      handlePause();
-    }
+    // ahora refresca la página completa
+    window.location.reload();
   };
 
   return (
@@ -360,13 +366,7 @@ export default function App() {
           placeholder="URL de YouTube"
           value={videoUrl}
           onChange={(e) => handleUrlChange(e.target.value)}
-          style={{ 
-            width: "100%", 
-            marginBottom: "10px", 
-            padding: "8px",
-            border: "1px solid #ddd",
-            borderRadius: "4px"
-          }}
+          style={{ width: "100%", marginBottom: "10px", padding: "8px", border: "1px solid #ddd", borderRadius: "4px" }}
         />
         
         <input
@@ -374,13 +374,7 @@ export default function App() {
           placeholder="Nombre de la canción"
           value={trackName}
           onChange={(e) => setTrackName(e.target.value)}
-          style={{ 
-            width: "100%", 
-            marginBottom: "10px", 
-            padding: "8px",
-            border: "1px solid #ddd",
-            borderRadius: "4px"
-          }}
+          style={{ width: "100%", marginBottom: "10px", padding: "8px", border: "1px solid #ddd", borderRadius: "4px" }}
         />
         
         <input
@@ -388,13 +382,7 @@ export default function App() {
           placeholder="Nombre del artista"
           value={artistName}
           onChange={(e) => setArtistName(e.target.value)}
-          style={{ 
-            width: "100%", 
-            marginBottom: "15px", 
-            padding: "8px",
-            border: "1px solid #ddd",
-            borderRadius: "4px"
-          }}
+          style={{ width: "100%", marginBottom: "15px", padding: "8px", border: "1px solid #ddd", borderRadius: "4px" }}
         />
 
         <div style={{ marginBottom: "15px" }}>
@@ -402,12 +390,7 @@ export default function App() {
           <select 
             value={difficulty} 
             onChange={(e) => setDifficulty(e.target.value)}
-            style={{ 
-              padding: "5px",
-              border: "1px solid #ddd",
-              borderRadius: "4px",
-              marginRight: "15px"
-            }}
+            style={{ padding: "5px", border: "1px solid #ddd", borderRadius: "4px", marginRight: "15px" }}
           >
             <option value="Fácil">Fácil</option>
             <option value="Medio">Medio</option>
@@ -415,86 +398,40 @@ export default function App() {
           </select>
         </div>
         
-        <div style={{ marginBottom: "15px" }}>
+        <div style={{ marginBottom: "15px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
           <button 
             onClick={handleLoadVideo}
             disabled={loading}
-            style={{ 
-              marginRight: "10px", 
-              padding: "8px 16px",
-              backgroundColor: loading ? "#ccc" : "#007bff",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: loading ? "not-allowed" : "pointer"
-            }}
+            style={{ padding: "8px 16px", backgroundColor: loading ? "#ccc" : "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: loading ? "not-allowed" : "pointer" }}
           >
             {loading ? "⏳ Cargando..." : "🔗 Cargar"}
           </button>
-          
-          <button 
-            onClick={handlePlay}
-            disabled={!gameStarted}
-            style={{ 
-              marginRight: "10px", 
-              padding: "8px 16px",
-              backgroundColor: !gameStarted ? "#ccc" : "#28a745",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: !gameStarted ? "not-allowed" : "pointer"
-            }}
+
+          {/* selector de vidas iniciales */}
+          <label style={{ fontWeight: "bold" }}>Vidas iniciales:</label>
+          <select
+            value={initialLives}
+            onChange={(e) => setInitialLives(parseInt(e.target.value, 10))}
+            style={{ padding: "5px", border: "1px solid #ddd", borderRadius: "4px" }}
           >
-            ▶ Play
-          </button>
-          
-          <button 
-            onClick={handlePause}
-            disabled={!gameStarted}
-            style={{ 
-              marginRight: "10px", 
-              padding: "8px 16px",
-              backgroundColor: !gameStarted ? "#ccc" : "#ffc107",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: !gameStarted ? "not-allowed" : "pointer"
-            }}
-          >
-            ⏸ Pause
-          </button>
-          
+            {[1,2,3,4,5,6,7,8,9,10].map(n => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+
           <button 
             onClick={resetGame}
-            style={{ 
-              padding: "8px 16px",
-              backgroundColor: "#dc3545",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer"
-            }}
+            style={{ padding: "8px 16px", backgroundColor: "#dc3545", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", marginLeft: "auto" }}
+            title="Recarga toda la página"
           >
             🔄 Reset
           </button>
         </div>
 
-        <div id="youtube-player" style={{ 
-          marginTop: "20px",
-          border: "2px solid #ddd",
-          borderRadius: "8px",
-          overflow: "hidden"
-        }}></div>
+        <div id="youtube-player" style={{ marginTop: "20px", border: "2px solid #ddd", borderRadius: "8px", overflow: "hidden" }}></div>
         
         {!videoId && (
-          <div style={{
-            marginTop: "20px",
-            padding: "20px",
-            backgroundColor: "#e9ecef",
-            borderRadius: "8px",
-            textAlign: "center",
-            color: "#6c757d"
-          }}>
+          <div style={{ marginTop: "20px", padding: "20px", backgroundColor: "#e9ecef", borderRadius: "8px", textAlign: "center", color: "#6c757d" }}>
             El video aparecerá aquí
           </div>
         )}
@@ -507,7 +444,7 @@ export default function App() {
         <div
           ref={rectangleRef}
           style={{
-            backgroundColor: "#2c3e50",
+            backgroundColor: bgColor,
             borderRadius: "15px",
             height: "60vh",
             overflowY: "auto",
@@ -515,44 +452,41 @@ export default function App() {
             color: "#ecf0f1",
             fontSize: "16px",
             fontWeight: "500",
-            lineHeight: "1.6"
+            lineHeight: "1.6",
+            position: "relative"
           }}
         >
           {captions.length === 0 ? (
-            <div style={{ 
-              textAlign: "center", 
-              color: "#95a5a6",
-              marginTop: "50px"
-            }}>
+            <div style={{ textAlign: "center", color: "#95a5a6", marginTop: "50px" }}>
               Las letras aparecerán aquí
             </div>
           ) : (
-            captions.map((line, idx) => (
-              <div
-                key={idx}
-                style={{
-                  color: idx === currentIndex ? "#ffffff" : "#7f8c8d",
-                  fontSize: idx === currentIndex ? "20px" : "16px",
-                  marginBottom: "15px",
-                  padding: "5px",
-                  transition: "all 0.3s ease",
-                  backgroundColor: idx === currentIndex ? "rgba(52, 152, 219, 0.2)" : "transparent",
-                  borderRadius: "5px",
-                  borderLeft: idx === currentIndex ? "4px solid #3498db" : "4px solid transparent"
-                }}
-              >
-                {getDisplayText(line, idx)}
-              </div>
-            ))
+            <>
+              <div style={{ height: "30vh" }} /> {/* Espaciador superior */}
+              {captions.map((line, idx) => (
+                <div
+                  key={idx}
+                  ref={(el) => (lineRefs.current[idx] = el)}
+                  style={{
+                    color: idx === currentIndex ? "#ffffff" : "#ecf0f1",
+                    fontSize: idx === currentIndex ? "20px" : "16px",
+                    marginBottom: "15px",
+                    padding: "5px",
+                    transition: "all 0.3s ease",
+                    backgroundColor: idx === currentIndex ? "rgba(255, 255, 255, 0.2)" : "transparent",
+                    borderRadius: "5px",
+                    borderLeft: idx === currentIndex ? "4px solid #fff" : "4px solid transparent",
+                  }}
+                >
+                  {getDisplayText(line, idx)}
+                </div>
+              ))}
+              <div style={{ height: "30vh" }} /> {/* Espaciador inferior */}
+            </>
           )}
         </div>
 
-        <div style={{ 
-          marginTop: "15px", 
-          display: "flex", 
-          justifyContent: "space-between",
-          alignItems: "center"
-        }}>
+        <div style={{ marginTop: "15px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ fontSize: "18px", fontWeight: "bold" }}>
             ❤️ Vidas: {lives}
           </div>
@@ -573,20 +507,9 @@ export default function App() {
               placeholder="Escribe la palabra..."
               onKeyDown={handleKeyPress}
               autoFocus
-              style={{ 
-                width: "100%",
-                padding: "10px", 
-                fontSize: "16px",
-                border: "2px solid #3498db",
-                borderRadius: "8px",
-                outline: "none"
-              }}
+              style={{ width: "100%", padding: "10px", fontSize: "16px", border: "2px solid #fff", borderRadius: "8px", outline: "none" }}
             />
-            <div style={{ 
-              marginTop: "5px", 
-              fontSize: "14px", 
-              color: "#7f8c8d" 
-            }}>
+            <div style={{ marginTop: "5px", fontSize: "14px", color: "#ecf0f1" }}>
               Presiona Enter para confirmar
             </div>
           </div>
