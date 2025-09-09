@@ -208,7 +208,20 @@ export default function App() {
         return;
       }
 
-      setCaptions(data);
+      // 🔧 Ordenar blanks por aparición izquierda→derecha y asegurar currentBlankIndex
+      const processed = data.map((line) => {
+        if (!line?.blanks || !line?.blankPositions) return line;
+        const pairs = line.blankPositions.map((pos, i) => ({ pos, word: line.blanks[i] }));
+        pairs.sort((a, b) => a.pos - b.pos);
+        return {
+          ...line,
+          blanks: pairs.map(p => p.word),
+          blankPositions: pairs.map(p => p.pos),
+          currentBlankIndex: 0,
+        };
+      });
+
+      setCaptions(processed);
       setRevealedWords({});
       setCurrentIndex(0);
       setLives(initialLives); // 👈 usa el valor seleccionado
@@ -251,44 +264,48 @@ export default function App() {
     });
   };
 
-  // Sincroniza tiempo -> línea activa, pausa si hay blanks
+  // Sincroniza tiempo -> línea activa y PAUSA en cada timestamp con blanks (incluye la primera)
   useEffect(() => {
     let interval;
     if (player && captions.length > 0 && gameStarted) {
       interval = setInterval(() => {
-        if (typeof player.getCurrentTime !== 'function') {
-          return;
-        }
+        if (typeof player.getCurrentTime !== 'function') return;
         
         const time = player.getCurrentTime();
-        
-        if (!waitingInput) {
-          let index = 0;
-          for (let i = 0; i < captions.length; i++) {
-            if (time >= captions[i].start) {
-              index = i;
-            } else {
-              break;
-            }
-          }
-          
-          if (index !== currentIndex) {
-            setCurrentIndex(index);
-            scrollToCenter(index);
 
-            const currentLine = captions[index];
-            if (currentLine?.blanks?.length > 0 && !waitingInput) {
-              handlePause();
-              setWaitingInput(true);
-            }
-          }
+        // calcular índice de línea actual
+        let index = 0;
+        for (let i = 0; i < captions.length; i++) {
+          if (time >= captions[i].start) index = i;
+          else break;
+        }
+
+        // actualizar índice/scroll si cambió
+        if (index !== currentIndex) {
+          setCurrentIndex(index);
+          scrollToCenter(index);
+        }
+
+        // ✅ Pausar al llegar al timestamp de la línea si hay blanks pendientes
+        const currentLine = captions[index];
+        if (!currentLine) return;
+
+        const currentStart = currentLine.start ?? 0;
+        const reached = time + 0.05 >= currentStart; // pequeña tolerancia (50ms)
+        const hasBlanks = (currentLine.blanks?.length ?? 0) > 0;
+        const cbi = typeof currentLine.currentBlankIndex === 'number' ? currentLine.currentBlankIndex : 0;
+        const pending = hasBlanks && cbi < currentLine.blanks.length;
+
+        if (reached && pending && !waitingInput) {
+          handlePause();
+          setWaitingInput(true);
         }
       }, 100);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [player, captions, waitingInput, currentIndex, gameStarted]);
+  }, [player, captions, currentIndex, waitingInput, gameStarted]);
 
   const normalizeText = (text) => {
     return text
@@ -319,10 +336,21 @@ export default function App() {
         
         if (currentBlankIndex + 1 < currentLine.blanks.length) {
           const updatedCaptions = [...captions];
-          updatedCaptions[currentIndex].currentBlankIndex = currentBlankIndex + 1;
+          updatedCaptions[currentIndex] = {
+            ...updatedCaptions[currentIndex],
+            currentBlankIndex: currentBlankIndex + 1
+          };
           setCaptions(updatedCaptions);
           setInputWord("");
+          // seguimos pausados en la misma línea para el siguiente blank
         } else {
+          // línea completada: marcar como terminada y reanudar
+          const updatedCaptions = [...captions];
+          updatedCaptions[currentIndex] = {
+            ...updatedCaptions[currentIndex],
+            currentBlankIndex: currentLine.blanks.length
+          };
+          setCaptions(updatedCaptions);
           setWaitingInput(false);
           setInputWord("");
           handlePlay();
