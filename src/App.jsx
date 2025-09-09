@@ -72,7 +72,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [gameStarted, setGameStarted] = useState(false);
 
-  // 🎨 color de fondo aleatorio (una sola vez al cargar)
+  // 🎨 color de fondo aleatorio (una sola vez al cargar) para el panel de letras
   const [bgColor, setBgColor] = useState("#2c3e50");
   useEffect(() => {
     const colors = [
@@ -84,8 +84,35 @@ export default function App() {
     setBgColor(randomColor);
   }, []);
 
-  // ⚙️ selector de vidas iniciales
+  // ⚙️ selector de vidas/saltos iniciales
   const [initialLives, setInitialLives] = useState(3);
+  const [initialSkips, setInitialSkips] = useState(3);
+  const [skips, setSkips] = useState(3);
+
+  // 🔔 Cuenta regresiva al primer play
+  const [isCountingDown, setIsCountingDown] = useState(false);
+  const [count, setCount] = useState(null);
+  const firstPlayHandledRef = useRef(false);
+  const audioCtxRef = useRef(null);
+
+  // 🌗 Tema (claro/oscuro)
+  const [theme, setTheme] = useState("light"); // "light" | "dark"
+  const isDark = theme === "dark";
+  const pageBg = isDark ? "#333841" : "#ffffff"; // plomo en oscuro, blanco en claro
+  const pageFg = isDark ? "#ffffff" : "#111111"; // blanco en oscuro, negro en claro
+  const panelLeftBg = isDark ? "#2b2f36" : "#f8f9fa"; // columna video
+  const borderCol = isDark ? "#3f4652" : "#ddd";
+  const softText = isDark ? "#c9ced6" : "#6c757d";
+  const inputBg = isDark ? "#3a3f47" : "#ffffff";
+  const inputBorder = isDark ? "#555c66" : "#ddd";
+  const inputColor = isDark ? "#eef2f6" : "#111";
+
+    useEffect(() => {
+    document.body.style.backgroundColor = pageBg;
+    document.body.style.color = pageFg;
+    document.body.style.margin = 0; // asegura que no haya bordes blancos
+  }, [pageBg, pageFg]);
+
 
   // YouTube IFrame API
   useEffect(() => {
@@ -116,18 +143,32 @@ export default function App() {
         player.destroy();
       }
 
-      const ytPlayer = new window.YT.Player("youtube-player", {
+      new window.YT.Player("youtube-player", {
         height: "315",
         width: "100%",
         videoId: id,
         playerVars: {
-          'playsinline': 1,
-          'controls': 1,
-          'rel': 0
+          playsinline: 1,
+          controls: 1,
+          rel: 0
         },
         events: {
           onReady: (event) => {
             setPlayer(event.target);
+          },
+          onStateChange: (event) => {
+            // ▶️ Primera vez que el usuario presiona Play en el reproductor
+            if (
+              event.data === window.YT.PlayerState.PLAYING &&
+              !firstPlayHandledRef.current &&
+              !isCountingDown
+            ) {
+              firstPlayHandledRef.current = true;
+              try { event.target.pauseVideo(); } catch {}
+              startCountdown(() => {
+                try { event.target.playVideo(); } catch {}
+              });
+            }
           },
           onError: (event) => {
             console.error("YouTube player error:", event.data);
@@ -141,14 +182,57 @@ export default function App() {
     }
   };
 
+  const ensureAudioCtx = async () => {
+    if (!audioCtxRef.current) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      audioCtxRef.current = new AudioContext();
+    }
+    if (audioCtxRef.current.state !== "running") {
+      try { await audioCtxRef.current.resume(); } catch {}
+    }
+    return audioCtxRef.current;
+  };
+
+  const playBeep = async (freq = 880, durationMs = 250, gain = 0.2) => {
+    const ctx = await ensureAudioCtx();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(gain, now);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + durationMs / 1000);
+    osc.connect(g).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + durationMs / 1000 + 0.02);
+  };
+
+  const startCountdown = async (onFinish) => {
+    setIsCountingDown(true);
+
+    setCount(3);
+    await playBeep(820, 220);
+    await new Promise(r => setTimeout(r, 600));
+
+    setCount(2);
+    await playBeep(900, 220);
+    await new Promise(r => setTimeout(r, 600));
+
+    setCount(1);
+    await playBeep(980, 700); // beeeeep
+    await new Promise(r => setTimeout(r, 800));
+
+    setIsCountingDown(false);
+    setCount(null);
+    if (typeof onFinish === "function") onFinish();
+  };
+
   const handleUrlChange = async (url) => {
     setVideoUrl(url);
-    
     if (url.trim()) {
       const id = extractVideoId(url);
       if (id) {
         setVideoId(id);
-        
         const info = await extractVideoInfo(id);
         if (info.artist || info.track) {
           setArtistName(info.artist);
@@ -162,7 +246,6 @@ export default function App() {
     if (!line.blankPositions || line.blankPositions.length === 0) {
       return line.displayText;
     }
-
     const words = line.text.split(" ");
     return words.map((word, wordIndex) => {
       if (line.blankPositions.includes(wordIndex)) {
@@ -175,18 +258,10 @@ export default function App() {
 
   const handleLoadVideo = async () => {
     const id = extractVideoId(videoUrl);
-    if (!id) {
-      alert("URL de YouTube inválida");
-      return;
-    }
-
-    if (!trackName.trim() || !artistName.trim()) {
-      alert("Debes poner nombre de canción y artista");
-      return;
-    }
+    if (!id) return alert("URL de YouTube inválida");
+    if (!trackName.trim() || !artistName.trim()) return alert("Debes poner nombre de canción y artista");
 
     setLoading(true);
-    
     try {
       if (!player || player.getVideoData().video_id !== id) {
         setVideoId(id);
@@ -196,19 +271,11 @@ export default function App() {
       const res = await fetch(
         `http://localhost:3001/captions?track_name=${encodeURIComponent(trackName)}&artist_name=${encodeURIComponent(artistName)}&difficulty=${encodeURIComponent(difficulty)}`
       );
-      
-      if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`);
-      }
-      
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const data = await res.json();
-      
-      if (!data || data.length === 0) {
-        alert("No se encontraron letras sincronizadas para esta canción");
-        return;
-      }
+      if (!data || data.length === 0) return alert("No se encontraron letras sincronizadas para esta canción");
 
-      // 🔧 Ordenar blanks por aparición izquierda→derecha y asegurar currentBlankIndex
+      // Ordenar blanks y asegurar currentBlankIndex
       const processed = data.map((line) => {
         if (!line?.blanks || !line?.blankPositions) return line;
         const pairs = line.blankPositions.map((pos, i) => ({ pos, word: line.blanks[i] }));
@@ -224,10 +291,11 @@ export default function App() {
       setCaptions(processed);
       setRevealedWords({});
       setCurrentIndex(0);
-      setLives(initialLives); // 👈 usa el valor seleccionado
+      setLives(initialLives);
+      setSkips(initialSkips);
       setGameStarted(true);
       setWaitingInput(false);
-      
+      firstPlayHandledRef.current = false; // permitir countdown en nueva carga
     } catch (err) {
       console.error("Error loading captions:", err);
       alert("No se pudieron obtener las letras desde LRCLIB.");
@@ -236,16 +304,12 @@ export default function App() {
     }
   };
 
-  // Controles internos para pausar/reproducir (UI removida, pero usados por el juego)
+  // Controles internos (UI sin botones)
   const handlePlay = () => { 
-    if (player && typeof player.playVideo === 'function') {
-      player.playVideo(); 
-    }
+    if (player && typeof player.playVideo === 'function') player.playVideo(); 
   };
   const handlePause = () => { 
-    if (player && typeof player.pauseVideo === 'function') {
-      player.pauseVideo(); 
-    }
+    if (player && typeof player.pauseVideo === 'function') player.pauseVideo(); 
   };
 
   // Scroll centrado (línea activa en el medio)
@@ -267,10 +331,9 @@ export default function App() {
   // Sincroniza tiempo -> línea activa y PAUSA en cada timestamp con blanks (incluye la primera)
   useEffect(() => {
     let interval;
-    if (player && captions.length > 0 && gameStarted) {
+    if (player && captions.length > 0 && gameStarted && !isCountingDown) {
       interval = setInterval(() => {
         if (typeof player.getCurrentTime !== 'function') return;
-        
         const time = player.getCurrentTime();
 
         // calcular índice de línea actual
@@ -286,12 +349,12 @@ export default function App() {
           scrollToCenter(index);
         }
 
-        // ✅ Pausar al llegar al timestamp de la línea si hay blanks pendientes
+        // Pausar al llegar al timestamp si hay blanks pendientes
         const currentLine = captions[index];
         if (!currentLine) return;
 
         const currentStart = currentLine.start ?? 0;
-        const reached = time + 0.05 >= currentStart; // pequeña tolerancia (50ms)
+        const reached = time + 0.05 >= currentStart; // tolerancia 50ms
         const hasBlanks = (currentLine.blanks?.length ?? 0) > 0;
         const cbi = typeof currentLine.currentBlankIndex === 'number' ? currentLine.currentBlankIndex : 0;
         const pending = hasBlanks && cbi < currentLine.blanks.length;
@@ -302,10 +365,8 @@ export default function App() {
         }
       }, 100);
     }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [player, captions, currentIndex, waitingInput, gameStarted]);
+    return () => { if (interval) clearInterval(interval); };
+  }, [player, captions, currentIndex, waitingInput, gameStarted, isCountingDown]);
 
   const normalizeText = (text) => {
     return text
@@ -335,22 +396,20 @@ export default function App() {
         }));
         
         if (currentBlankIndex + 1 < currentLine.blanks.length) {
-          const updatedCaptions = [...captions];
-          updatedCaptions[currentIndex] = {
-            ...updatedCaptions[currentIndex],
+          const updated = [...captions];
+          updated[currentIndex] = {
+            ...updated[currentIndex],
             currentBlankIndex: currentBlankIndex + 1
           };
-          setCaptions(updatedCaptions);
+          setCaptions(updated);
           setInputWord("");
-          // seguimos pausados en la misma línea para el siguiente blank
         } else {
-          // línea completada: marcar como terminada y reanudar
-          const updatedCaptions = [...captions];
-          updatedCaptions[currentIndex] = {
-            ...updatedCaptions[currentIndex],
+          const updated = [...captions];
+          updated[currentIndex] = {
+            ...updated[currentIndex],
             currentBlankIndex: currentLine.blanks.length
           };
-          setCaptions(updatedCaptions);
+          setCaptions(updated);
           setWaitingInput(false);
           setInputWord("");
           handlePlay();
@@ -369,32 +428,127 @@ export default function App() {
     }
   };
 
+  // 👇 Lógica del botón de Salto
+  const handleSkip = () => {
+    if (!waitingInput || skips <= 0 || !captions[currentIndex]) return;
+
+    const updated = [...captions];
+    const line = updated[currentIndex];
+    const cbi = line.currentBlankIndex || 0;
+
+    const correctWord = line.blanks[cbi];
+    const wordIndexInLine = line.blankPositions[cbi];
+    const wordKey = `${currentIndex}-${wordIndexInLine}`;
+
+    setRevealedWords(prev => ({
+      ...prev,
+      [wordKey]: correctWord
+    }));
+
+    if (difficulty === "Fácil" || cbi + 1 >= line.blanks.length) {
+      updated[currentIndex] = {
+        ...line,
+        currentBlankIndex: line.blanks.length
+      };
+      setCaptions(updated);
+      setWaitingInput(false);
+      setInputWord("");
+      setSkips((s) => s - 1);
+      handlePlay();
+    } else {
+      updated[currentIndex] = {
+        ...line,
+        currentBlankIndex: cbi + 1
+      };
+      setCaptions(updated);
+      setInputWord("");
+      setSkips((s) => s - 1);
+    }
+  };
+
   const resetGame = () => {
-    // ahora refresca la página completa
     window.location.reload();
   };
+
+  // 🌗 Toggle de tema (slider con sol/luna)
+  const ThemeToggle = () => (
+    <button
+      onClick={() => setTheme(isDark ? "light" : "dark")}
+      aria-label="Cambiar tema"
+      title={isDark ? "Cambiar a claro" : "Cambiar a oscuro"}
+      style={{
+        position: "fixed",
+        top: 16,
+        right: 16,
+        zIndex: 10000,
+        background: "transparent",
+        border: "none",
+        padding: 0,
+        cursor: "pointer"
+      }}
+    >
+      <div
+        style={{
+          width: 64,
+          height: 32,
+          borderRadius: 32,
+          background: isDark ? "#1f232a" : "#e6e6e6",
+          border: `1px solid ${isDark ? "#3a3f47" : "#d0d0d0"}`,
+          position: "relative",
+          boxShadow: isDark ? "inset 0 0 0 1px rgba(255,255,255,0.05)" : "inset 0 0 0 1px rgba(0,0,0,0.03)"
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: 2,
+            left: isDark ? 34 : 2,
+            width: 28,
+            height: 28,
+            borderRadius: 28,
+            background: isDark ? "#0f1115" : "#ffffff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            transition: "left 0.22s ease",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.25)"
+          }}
+        >
+          <span style={{ fontSize: 16 }}>{isDark ? "🌙" : "☀️"}</span>
+        </div>
+      </div>
+    </button>
+  );
 
   return (
     <div style={{ 
       display: "grid", 
       gridTemplateColumns: "1fr 1fr", 
       height: "100vh",
-      fontFamily: "Arial, sans-serif"
+      fontFamily: "Arial, sans-serif",
+      backgroundColor: pageBg,
+      color: pageFg
     }}>
+      <ThemeToggle />
+
       {/* Video */}
       <div style={{ 
-        borderRight: "2px solid #ddd", 
+        borderRight: `2px solid ${borderCol}`, 
         padding: "20px",
-        backgroundColor: "#f8f9fa"
+        backgroundColor: panelLeftBg
       }}>
-        <h2>🎬 Video</h2>
+        <h2 style={{ marginTop: 0 }}>🎬 Video</h2>
         
         <input
           type="text"
           placeholder="URL de YouTube"
           value={videoUrl}
           onChange={(e) => handleUrlChange(e.target.value)}
-          style={{ width: "100%", marginBottom: "10px", padding: "8px", border: "1px solid #ddd", borderRadius: "4px" }}
+          style={{ 
+            width: "100%", marginBottom: "10px", padding: "8px",
+            backgroundColor: inputBg, color: inputColor,
+            border: `1px solid ${inputBorder}`, borderRadius: "4px"
+          }}
         />
         
         <input
@@ -402,7 +556,11 @@ export default function App() {
           placeholder="Nombre de la canción"
           value={trackName}
           onChange={(e) => setTrackName(e.target.value)}
-          style={{ width: "100%", marginBottom: "10px", padding: "8px", border: "1px solid #ddd", borderRadius: "4px" }}
+          style={{ 
+            width: "100%", marginBottom: "10px", padding: "8px",
+            backgroundColor: inputBg, color: inputColor,
+            border: `1px solid ${inputBorder}`, borderRadius: "4px"
+          }}
         />
         
         <input
@@ -410,7 +568,11 @@ export default function App() {
           placeholder="Nombre del artista"
           value={artistName}
           onChange={(e) => setArtistName(e.target.value)}
-          style={{ width: "100%", marginBottom: "15px", padding: "8px", border: "1px solid #ddd", borderRadius: "4px" }}
+          style={{ 
+            width: "100%", marginBottom: "15px", padding: "8px",
+            backgroundColor: inputBg, color: inputColor,
+            border: `1px solid ${inputBorder}`, borderRadius: "4px"
+          }}
         />
 
         <div style={{ marginBottom: "15px" }}>
@@ -418,7 +580,12 @@ export default function App() {
           <select 
             value={difficulty} 
             onChange={(e) => setDifficulty(e.target.value)}
-            style={{ padding: "5px", border: "1px solid #ddd", borderRadius: "4px", marginRight: "15px" }}
+            style={{ 
+              padding: "5px",
+              backgroundColor: inputBg, color: inputColor,
+              border: `1px solid ${inputBorder}`, borderRadius: "4px",
+              marginRight: "15px"
+            }}
           >
             <option value="Fácil">Fácil</option>
             <option value="Medio">Medio</option>
@@ -430,7 +597,14 @@ export default function App() {
           <button 
             onClick={handleLoadVideo}
             disabled={loading}
-            style={{ padding: "8px 16px", backgroundColor: loading ? "#ccc" : "#007bff", color: "white", border: "none", borderRadius: "4px", cursor: loading ? "not-allowed" : "pointer" }}
+            style={{ 
+              padding: "8px 16px",
+              backgroundColor: loading ? "#888" : "#007bff",
+              color: "white",
+              border: "none",
+              borderRadius: "4px",
+              cursor: loading ? "not-allowed" : "pointer"
+            }}
           >
             {loading ? "⏳ Cargando..." : "🔗 Cargar"}
           </button>
@@ -440,34 +614,65 @@ export default function App() {
           <select
             value={initialLives}
             onChange={(e) => setInitialLives(parseInt(e.target.value, 10))}
-            style={{ padding: "5px", border: "1px solid #ddd", borderRadius: "4px" }}
+            style={{ padding: "5px",
+              backgroundColor: inputBg, color: inputColor,
+              border: `1px solid ${inputBorder}`, borderRadius: "4px" }}
           >
             {[1,2,3,4,5,6,7,8,9,10].map(n => (
               <option key={n} value={n}>{n}</option>
             ))}
           </select>
 
+          {/* selector de saltos iniciales */}
+          <label style={{ fontWeight: "bold" }}>Saltos iniciales:</label>
+          <select
+            value={initialSkips}
+            onChange={(e) => setInitialSkips(parseInt(e.target.value, 10))}
+            style={{ padding: "5px",
+              backgroundColor: inputBg, color: inputColor,
+              border: `1px solid ${inputBorder}`, borderRadius: "4px" }}
+          >
+            {[0,1,2,3,4,5,6,7,8,9,10].map(n => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+
           <button 
-            onClick={resetGame}
-            style={{ padding: "8px 16px", backgroundColor: "#dc3545", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", marginLeft: "auto" }}
+            onClick={() => window.location.reload()}
+            style={{ 
+              padding: "8px 16px",
+              backgroundColor: "#dc3545",
+              color: "white",
+              border: "none",
+              borderRadius: "4px",
+              cursor: "pointer",
+              marginLeft: "auto"
+            }}
             title="Recarga toda la página"
           >
             🔄 Reset
           </button>
         </div>
 
-        <div id="youtube-player" style={{ marginTop: "20px", border: "2px solid #ddd", borderRadius: "8px", overflow: "hidden" }}></div>
+        <div id="youtube-player" style={{ 
+          marginTop: "20px", border: `2px solid ${borderCol}`,
+          borderRadius: "8px", overflow: "hidden" }}></div>
         
         {!videoId && (
-          <div style={{ marginTop: "20px", padding: "20px", backgroundColor: "#e9ecef", borderRadius: "8px", textAlign: "center", color: "#6c757d" }}>
+          <div style={{
+            marginTop: "20px", padding: "20px",
+            backgroundColor: isDark ? "#262a31" : "#e9ecef",
+            borderRadius: "8px", textAlign: "center",
+            color: softText
+          }}>
             El video aparecerá aquí
           </div>
         )}
       </div>
 
       {/* Juego de letras */}
-      <div style={{ padding: "20px", backgroundColor: "#f1f3f5" }}>
-        <h2>🎮 Juego de Letras</h2>
+      <div style={{ padding: "20px", backgroundColor: isDark ? "#2f343c" : "#f1f3f5" }}>
+        <h2 style={{ marginTop: 0 }}>🎮 Juego de Letras</h2>
 
         <div
           ref={rectangleRef}
@@ -477,7 +682,7 @@ export default function App() {
             height: "60vh",
             overflowY: "auto",
             padding: "20px",
-            color: "#ecf0f1",
+            color: "#ecf0f1", // las letras del panel siguen claras para alto contraste con color vívido
             fontSize: "16px",
             fontWeight: "500",
             lineHeight: "1.6",
@@ -485,7 +690,7 @@ export default function App() {
           }}
         >
           {captions.length === 0 ? (
-            <div style={{ textAlign: "center", color: "#95a5a6", marginTop: "50px" }}>
+            <div style={{ textAlign: "center", color: "rgba(255,255,255,0.7)", marginTop: "50px" }}>
               Las letras aparecerán aquí
             </div>
           ) : (
@@ -515,12 +720,28 @@ export default function App() {
         </div>
 
         <div style={{ marginTop: "15px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontSize: "18px", fontWeight: "bold" }}>
-            ❤️ Vidas: {lives}
+          <div style={{ fontSize: "18px", fontWeight: "bold", display: "flex", alignItems: "center", gap: "12px" }}>
+            <span>❤️ Vidas: {lives}</span>
+            <button
+              onClick={handleSkip}
+              disabled={!waitingInput || skips <= 0}
+              style={{
+                padding: "6px 12px",
+                backgroundColor: (!waitingInput || skips <= 0) ? (isDark ? "#555" : "#888") : "#6f42c1",
+                color: "white",
+                border: "none",
+                borderRadius: "6px",
+                cursor: (!waitingInput || skips <= 0) ? "not-allowed" : "pointer"
+              }}
+              title={waitingInput ? "Saltar blank actual" : "Disponible cuando se detiene para escribir"}
+            >
+              ⏭️ Salto
+            </button>
+            <span>Saltos: {skips}</span>
           </div>
           
           {gameStarted && (
-            <div style={{ color: "#28a745", fontWeight: "bold" }}>
+            <div style={{ color: isDark ? "#7CFC9A" : "#28a745", fontWeight: "bold" }}>
               🎵 {currentIndex + 1} / {captions.length}
             </div>
           )}
@@ -535,14 +756,46 @@ export default function App() {
               placeholder="Escribe la palabra..."
               onKeyDown={handleKeyPress}
               autoFocus
-              style={{ width: "100%", padding: "10px", fontSize: "16px", border: "2px solid #fff", borderRadius: "8px", outline: "none" }}
+              style={{ 
+                width: "100%", padding: "10px", fontSize: "16px",
+                border: "2px solid #fff", borderRadius: "8px", outline: "none",
+                backgroundColor: "rgba(255,255,255,0.15)", color: "#fff"
+              }}
             />
-            <div style={{ marginTop: "5px", fontSize: "14px", color: "#ecf0f1" }}>
+            <div style={{ marginTop: "5px", fontSize: "14px", color: "rgba(255,255,255,0.85)" }}>
               Presiona Enter para confirmar
             </div>
           </div>
         )}
       </div>
+
+      {/* Overlay de cuenta regresiva */}
+      {isCountingDown && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            backdropFilter: "blur(2px)"
+          }}
+        >
+          <div
+            style={{
+              color: "#fff",
+              fontSize: "18vw",
+              fontWeight: 800,
+              textShadow: "0 8px 24px rgba(0,0,0,0.5)",
+              letterSpacing: "-0.02em"
+            }}
+          >
+            {count}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
