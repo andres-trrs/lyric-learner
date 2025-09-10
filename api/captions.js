@@ -1,4 +1,4 @@
-// api/captions.js  (Vercel Serverless, Node 18: usa fetch global)
+// api/captions.js  (ESM: export default handler)
 
 function generateBlanksForLine(text, difficulty) {
   if (!text || text.trim() === '') {
@@ -31,7 +31,7 @@ function generateBlanksForLine(text, difficulty) {
   };
 }
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   try {
     const { track_name, artist_name, difficulty = "Fácil" } = req.query || {};
     if (!track_name || !artist_name) {
@@ -81,4 +81,4 @@ module.exports = async (req, res) => {
     console.error("[/api/captions] error:", err);
     res.status(500).json({ error: "No se pudo obtener la letra" });
   }
-};
+}
