@@ -1,7 +1,5 @@
-// api/captions.js  (CommonJS para Vercel Serverless por defecto)
-const fetch = global.fetch || (await import('node-fetch')).default;
+// api/captions.js  (Vercel Serverless, Node 18: usa fetch global)
 
-// misma función que tenías en server.js
 function generateBlanksForLine(text, difficulty) {
   if (!text || text.trim() === '') {
     return { originalText: text, displayText: text, blanks: [], blankPositions: [], currentBlankIndex: 0 };
@@ -33,7 +31,6 @@ function generateBlanksForLine(text, difficulty) {
   };
 }
 
-// handler
 module.exports = async (req, res) => {
   try {
     const { track_name, artist_name, difficulty = "Fácil" } = req.query || {};
@@ -43,7 +40,7 @@ module.exports = async (req, res) => {
     }
 
     const url = `https://lrclib.net/api/get?track_name=${encodeURIComponent(track_name)}&artist_name=${encodeURIComponent(artist_name)}`;
-    const r = await fetch(url);
+    const r = await fetch(url, { headers: { "accept": "application/json" } });
     if (!r.ok) {
       res.status(r.status).json({ error: `LRCLIB error status ${r.status}` });
       return;
@@ -51,6 +48,7 @@ module.exports = async (req, res) => {
     const data = await r.json();
 
     if (!data.syncedLyrics) {
+      res.setHeader("Cache-Control", "s-maxage=60, stale-while-revalidate");
       res.json([]);
       return;
     }
@@ -80,7 +78,7 @@ module.exports = async (req, res) => {
     res.setHeader("Cache-Control", "s-maxage=60, stale-while-revalidate");
     res.status(200).json(lines);
   } catch (err) {
-    console.error(err);
+    console.error("[/api/captions] error:", err);
     res.status(500).json({ error: "No se pudo obtener la letra" });
   }
 };
