@@ -95,6 +95,10 @@ export default function App() {
   const firstPlayHandledRef = useRef(false);
   const audioCtxRef = useRef(null);
 
+  // 🌟 FX de lluvia de emojis
+  const [fxParticles, setFxParticles] = useState([]); // array de spans
+  const fxTimeoutRef = useRef(null);
+
   // 🌗 Tema (claro/oscuro)
   const [theme, setTheme] = useState("light"); // "light" | "dark"
   const isDark = theme === "dark";
@@ -107,12 +111,11 @@ export default function App() {
   const inputBorder = isDark ? "#555c66" : "#ddd";
   const inputColor = isDark ? "#eef2f6" : "#111";
 
-    useEffect(() => {
+  useEffect(() => {
     document.body.style.backgroundColor = pageBg;
     document.body.style.color = pageFg;
-    document.body.style.margin = 0; // asegura que no haya bordes blancos
+    document.body.style.margin = 0;
   }, [pageBg, pageFg]);
-
 
   // YouTube IFrame API
   useEffect(() => {
@@ -182,6 +185,7 @@ export default function App() {
     }
   };
 
+  // ====== AUDIO HELPERS ======
   const ensureAudioCtx = async () => {
     if (!audioCtxRef.current) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -193,20 +197,43 @@ export default function App() {
     return audioCtxRef.current;
   };
 
-  const playBeep = async (freq = 880, durationMs = 250, gain = 0.2) => {
+  const playTone = async (freq = 880, durationMs = 250, gain = 0.2, type = "sine") => {
     const ctx = await ensureAudioCtx();
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
-    osc.type = "sine";
+    osc.type = type;
     osc.frequency.value = freq;
     g.gain.setValueAtTime(gain, now);
     g.gain.exponentialRampToValueAtTime(0.0001, now + durationMs / 1000);
     osc.connect(g).connect(ctx.destination);
     osc.start(now);
     osc.stop(now + durationMs / 1000 + 0.02);
+    return new Promise(r => setTimeout(r, durationMs));
   };
 
+  const playBeep = (freq = 880, durationMs = 250, gain = 0.2) => playTone(freq, durationMs, gain, "sine");
+
+  const playAwww = async () => {
+    // un glide descendente estilo "awww"
+    await playTone(600, 200, 0.25, "triangle");
+    await playTone(480, 200, 0.22, "triangle");
+    await playTone(360, 400, 0.2, "sine");
+  };
+
+  const playCelebrate = async () => {
+    // arpegio alegre
+    await playTone(880, 160, 0.22, "sine");
+    await playTone(1175, 160, 0.22, "sine");
+    await playTone(1568, 320, 0.24, "triangle");
+  };
+
+  const playChime = async () => {
+    // campanilla breve
+    await playTone(1200, 180, 0.22, "sine");
+  };
+
+  // ====== COUNTDOWN ======
   const startCountdown = async (onFinish) => {
     setIsCountingDown(true);
 
@@ -225,6 +252,48 @@ export default function App() {
     setIsCountingDown(false);
     setCount(null);
     if (typeof onFinish === "function") onFinish();
+  };
+
+  // ====== FX EMOJI RAIN ======
+  const makeParticles = (emojis, count = 60) => {
+    const arr = [];
+    for (let i = 0; i < count; i++) {
+      const emoji = emojis[Math.floor(Math.random() * emojis.length)];
+      const left = Math.random() * 100; // %
+      const size = 18 + Math.random() * 38; // px
+      const duration = 1.2 + Math.random() * 1.6; // s
+      const delay = Math.random() * 0.9; // s
+      const rotate = (Math.random() * 360) * (Math.random() > 0.5 ? 1 : -1);
+      arr.push({ id: `${Date.now()}-${i}`, emoji, left, size, duration, delay, rotate });
+    }
+    return arr;
+  };
+
+  const triggerFx = async (type) => {
+    // seleccionar emojis y sonido
+    let emojis = [];
+    if (type === "lose") {
+      emojis = ["😥","😣","😓","😔","😢","😭","😰"];
+      playAwww();
+    } else if (type === "win") {
+      emojis = ["😀","😁","😉","🤗","🥳","🎉","🎈"];
+      playCelebrate();
+    } else if (type === "skip") {
+      emojis = ["⏩"];
+      playChime();
+    } else {
+      return;
+    }
+
+    const parts = makeParticles(emojis, type === "skip" ? 40 : 70);
+    setFxParticles(parts);
+
+    // limpiar después del máximo duration + delay
+    if (fxTimeoutRef.current) clearTimeout(fxTimeoutRef.current);
+    const maxMillis = Math.max(...parts.map(p => (p.duration + p.delay) * 1000)) + 200;
+    fxTimeoutRef.current = setTimeout(() => {
+      setFxParticles([]);
+    }, maxMillis);
   };
 
   const handleUrlChange = async (url) => {
@@ -377,6 +446,13 @@ export default function App() {
       .trim();
   };
 
+  const checkWinIfNeeded = (lineJustCompleted) => {
+    // ganar si acabas de completar la última línea con blanks
+    if (currentIndex === captions.length - 1 && (lineJustCompleted?.blanks?.length ?? 0) > 0) {
+      triggerFx("win");
+    }
+  };
+
   const handleKeyPress = (e) => {
     if (e.key === "Enter" && waitingInput && captions[currentIndex]) {
       const currentLine = captions[currentIndex];
@@ -413,6 +489,7 @@ export default function App() {
           setWaitingInput(false);
           setInputWord("");
           handlePlay();
+          checkWinIfNeeded(currentLine);
         }
       } else {
         const newLives = lives - 1;
@@ -420,9 +497,11 @@ export default function App() {
         setInputWord("");
         
         if (newLives <= 0) {
-          alert("💀 Has perdido. Reinicia el juego para intentar de nuevo.");
+          // perder: animación + sonido; parar juego y pausar video
           setGameStarted(false);
           setWaitingInput(false);
+          try { handlePause(); } catch {}
+          triggerFx("lose");
         }
       }
     }
@@ -445,6 +524,8 @@ export default function App() {
       [wordKey]: correctWord
     }));
 
+    triggerFx("skip"); // animación + sonido de salto
+
     if (difficulty === "Fácil" || cbi + 1 >= line.blanks.length) {
       updated[currentIndex] = {
         ...line,
@@ -455,6 +536,8 @@ export default function App() {
       setInputWord("");
       setSkips((s) => s - 1);
       handlePlay();
+      // si es la última línea, considerar win
+      checkWinIfNeeded(line);
     } else {
       updated[currentIndex] = {
         ...line,
@@ -529,6 +612,15 @@ export default function App() {
       backgroundColor: pageBg,
       color: pageFg
     }}>
+      {/* estilos para animación de caída */}
+      <style>{`
+        @keyframes emoji-fall {
+          0%   { transform: translateY(-12vh) rotate(0deg); opacity: 1; }
+          95%  { opacity: 1; }
+          100% { transform: translateY(110vh) rotate(360deg); opacity: 0; }
+        }
+      `}</style>
+
       <ThemeToggle />
 
       {/* Video */}
@@ -682,7 +774,7 @@ export default function App() {
             height: "60vh",
             overflowY: "auto",
             padding: "20px",
-            color: "#ecf0f1", // las letras del panel siguen claras para alto contraste con color vívido
+            color: "#ecf0f1", // alto contraste con color vívido
             fontSize: "16px",
             fontWeight: "500",
             lineHeight: "1.6",
@@ -794,6 +886,34 @@ export default function App() {
           >
             {count}
           </div>
+        </div>
+      )}
+
+      {/* Overlay de lluvia de emojis (sin fondo) */}
+      {fxParticles.length > 0 && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9998,
+            pointerEvents: "none"
+          }}
+        >
+          {fxParticles.map(p => (
+            <span
+              key={p.id}
+              style={{
+                position: "absolute",
+                top: "-10vh",
+                left: `${p.left}%`,
+                fontSize: `${p.size}px`,
+                transform: `rotate(${p.rotate}deg)`,
+                animation: `emoji-fall ${p.duration}s linear ${p.delay}s forwards`
+              }}
+            >
+              {p.emoji}
+            </span>
+          ))}
         </div>
       )}
     </div>
